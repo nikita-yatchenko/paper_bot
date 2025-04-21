@@ -193,8 +193,8 @@ class PaperProcessor:
 
         # Создаем объект CharacterTextSplitter для разбиения текста на части (чанки)
         text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
-            chunk_size=1000,
-            chunk_overlap=500
+            chunk_size=500,
+            chunk_overlap=100
         )
         joined_texts = " ".join(texts)
         texts_token = text_splitter.split_text(joined_texts)
@@ -331,14 +331,20 @@ class PaperProcessor:
                     Document(page_content=s, metadata={id_key: doc_ids[i]})
                     for i, s in enumerate(doc_contents)
                 ]
+            logger.debug("Adding original texts")
+            docs_2 = [
+                Document(page_content=s, metadata={id_key: doc_ids[i]})
+                for i, s in enumerate(doc_contents)
+            ]
 
             # Добавляем документы в векторное хранилище
             # retriever.vectorstore.add_documents(summary_docs)
             logger.debug(f"Docs: {len(docs)}")
             retriever.vectorstore.add_documents(docs)
+            retriever.vectorstore.add_documents(docs_2)
 
             # Добавляем метаданные документов в хранилище
-            retriever.docstore.mset(list(zip(doc_ids, doc_summaries)))
+            # retriever.docstore.mset(list(zip(doc_ids, doc_summaries)))
 
         # Добавляем суммаризации текстов и таблиц, если они присутствуют
         if texts:  # text_summaries:
