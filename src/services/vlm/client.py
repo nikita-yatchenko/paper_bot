@@ -1,5 +1,9 @@
 import torch
-from transformers import AutoModelForVision2Seq, AutoProcessor
+from transformers import (
+    AutoModelForVision2Seq,
+    AutoProcessor,
+    LlavaOnevisionForConditionalGeneration,
+)
 
 from src.settings.logger import setup_logger
 
@@ -19,9 +23,17 @@ class CustomLLM:
 
         attention_type = "flash_attention_2" if self.device == "cuda" else "eager"
         self.processor = AutoProcessor.from_pretrained(model_path)
-        self.model = AutoModelForVision2Seq.from_pretrained(model_path,
-                                                            torch_dtype=torch.bfloat16,
-                                                            _attn_implementation=attention_type).to(self.device)
+        if "SmolVLM" in model_path:
+            self.model = AutoModelForVision2Seq.from_pretrained(model_path,
+                                                                torch_dtype=torch.bfloat16,
+                                                                _attn_implementation=attention_type).to(self.device)
+        else:
+            model_id = "llava-hf/llava-onevision-qwen2-0.5b-ov-hf"
+            self.model = LlavaOnevisionForConditionalGeneration.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+            ).to(self.device)
 
     def preprocess_input(self, inputs: dict):
         """

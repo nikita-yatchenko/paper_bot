@@ -136,7 +136,7 @@ class PaperProcessor:
         self.embedding_function = MultimodalEmbeddingFunction(model_name="jinaai/jina-clip-v1")
         logger.info("Loading pretrained summarizer")
         self.summarizer = pipeline("summarization", model="Falconsai/text_summarization", device=self.device)
-        self.llm = CustomLLM()
+        self.llm = CustomLLM("llava-hf/llava-onevision-qwen2-0.5b-ov-hf")
         self.summary = summary
         self.data = {}
 
