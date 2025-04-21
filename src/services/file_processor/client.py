@@ -142,8 +142,8 @@ class PaperProcessor:
 
     def create_first_page_summary(self, text: str):
         messages = [
-            {"role": "user", "content": [{"type": "text", "text": f"What are the names of the authors, name of the "
-                                                                  f"paper (title), and key ideas?\n\n"
+            {"role": "user", "content": [{"type": "text", "text": f"Extract: 1) the names of the authors, 2) name of "
+                                                                  f"paper (title), and 3) key ideas?\n\n"
                                                                   f"Use this page: {text}"}]}
         ]
 
@@ -156,7 +156,7 @@ class PaperProcessor:
         )
 
         inputs = {k: v.to(self.device) for k, v in processed.items()}
-        generated_ids = self.llm.model.generate(**inputs, max_new_tokens=128)
+        generated_ids = self.llm.model.generate(**inputs, max_new_tokens=256)
         prompt_len = len(processed['input_ids'][0])
         mod_gen_id = generated_ids[0][prompt_len:].reshape(1, -1)
         generated_texts = self.llm.processor.batch_decode(
@@ -207,11 +207,11 @@ class PaperProcessor:
             logger.debug(f"First page: {texts_token[0]}")
             logger.debug(f"First page summary: {first_page_summary}")
             texts_summaries = self.summarizer(
-                texts_token,  # List of input texts
-                max_length=500,  # Maximum length of the summary
-                min_length=25,  # Minimum length of the summary
-                do_sample=False,  # Use deterministic summarization
-                batch_size=8  # Number of texts processed in parallel
+                texts_token,
+                max_length=500,
+                min_length=25,
+                do_sample=False,
+                batch_size=16
             )
             # summarized = self.summarizer(tt, max_length=500, min_length=30, do_sample=False)[0]["summary_text"]
             texts_summaries = [i["summary_text"] for i in texts_summaries]
