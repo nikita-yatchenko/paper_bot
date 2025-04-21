@@ -1,5 +1,11 @@
 # ArXiv Paper Analyzer Bot 🤖📄📚
 
+# TODO:
+- quantized llm and measure speed
+- vlm client API
+- doc processor client API
+- download archivx PDF
+
 A Telegram bot that fetches, analyzes, and summarizes research papers from arXiv.
 
 ✨ Features
