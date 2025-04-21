@@ -2,9 +2,12 @@ import asyncio
 import os
 
 from aiogram import Bot, Dispatcher
+from dotenv import find_dotenv, load_dotenv
 
 from src.services.file_processor.client import PaperProcessor
 from src.settings.logger import setup_logger
+
+load_dotenv(find_dotenv())
 
 
 async def start_bot():
@@ -27,6 +30,7 @@ async def start_bot():
     dp.include_router(analyze.router)
     dp.include_router(common.router)
 
+    logger.info("Bot started")
     await dp.start_polling(bot)
 
 

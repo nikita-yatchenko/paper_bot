@@ -19,7 +19,7 @@ async def analyze(message: Message, state: FSMContext):
     await state.update_data(paper_id=None)
 
     await message.answer(
-        "📸 Please provide an ArXiv paper id, like 2307.00651v1\n",
+        "(!) Please provide an ArXiv paper id, like 2307.00651v1\n",
         reply_markup=main_menu()
     )
     await state.set_state(AnalyzingStates.AWAITING_PAPER)
@@ -30,8 +30,16 @@ async def process_paper(message: Message, state: FSMContext, paper_processor: Pa
     user_id = message.from_user.id
     paper_id = message.text
     logger.info(f"User {user_id} initiated paper analysis of {paper_id}")
+    await message.answer(
+        "Thanks! Your AI assistant is busy reading the paper - wait a little bit and we will let you know when you "
+        "can start asking questions!\n",
+    )
     await paper_processor.process(paper_id)
+    await message.answer(
+        "Great - we are ready! Fire away\n",
+    )
     logger.info(f"Done with paper analysis of {paper_id} for user {user_id}")
+    await state.update_data(paper_id=paper_id)
     await state.set_state(AnalyzingStates.CONFIRMATION)
 
 
@@ -40,9 +48,7 @@ async def handle_user_response(message: Message,
                                state: FSMContext,
                                paper_processor: PaperProcessor) -> None:
     logger.info(f"User {message.from_user.id} processing question: {message.text}")
-    paper_id = state.get_data()["paper_id"]
-    response = await process_user_response(paper_processor, message, paper_id)
-    await message.answer(
-            response,
-            # reply_markup=main_menu()
-        )
+    data = await state.get_data()
+    paper_id = data["paper_id"]
+    logger.debug(f"Paper ID: {paper_id}")
+    await process_user_response(paper_processor, message, paper_id)

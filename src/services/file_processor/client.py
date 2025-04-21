@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 from typing import List
 
+import numpy as np
 import requests
 import torch
 from langchain.retrievers.multi_vector import MultiVectorRetriever
@@ -13,13 +14,16 @@ from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
+from transformers import AutoModel, CLIPModel, CLIPProcessor, pipeline
 from unstructured.partition.pdf import partition_pdf
 
+from src.services.file_processor.utils import (
+    is_image_data,
+    looks_like_base64,
+    resize_base64_image,
+)
 from src.services.vlm.client import CustomLLM
 from src.settings.logger import setup_logger
-
-from .utils import is_image_data, looks_like_base64, resize_base64_image
 
 logger = setup_logger()
 project_root = Path(Path(os.path.abspath(__file__))).parent.parent.parent.parent
@@ -35,10 +39,15 @@ class MultimodalEmbeddingFunction:
             model_name (str): The name of the pretrained multimodal model.
         """
         self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        self.model_name = model_name
         logger.info("Loading model")
-        self.model = CLIPModel.from_pretrained(model_name).to(self.device)
-        logger.info("Loading processor")
-        self.processor = CLIPProcessor.from_pretrained(model_name, use_fast=False)
+        if model_name == "openai/clip-vit-base-patch32":
+            self.model = CLIPModel.from_pretrained(model_name).to(self.device)
+            logger.info("Loading processor")
+            self.processor = CLIPProcessor.from_pretrained(model_name, use_fast=False)
+        else:
+            self.model = AutoModel.from_pretrained("jinaai/jina-clip-v1",
+                                                   trust_remote_code=True)
 
     def embed_documents(self, inputs: List) -> List[List[float]]:
         """
@@ -54,7 +63,7 @@ class MultimodalEmbeddingFunction:
         """
         # Generate embeddings using the multimodal function
         embeddings_tensor = self._multimodal_embedding_function(inputs)
-        return embeddings_tensor.cpu().numpy().tolist()
+        return embeddings_tensor.tolist()
 
     def embed_query(self, input_item) -> List[float]:
         """
@@ -68,7 +77,7 @@ class MultimodalEmbeddingFunction:
         """
         # Wrap the single input in a list and generate embeddings
         embeddings_tensor = self._multimodal_embedding_function([input_item])
-        return embeddings_tensor.cpu().numpy().tolist()[0]
+        return embeddings_tensor.tolist()[0]
 
     def _multimodal_embedding_function(self, inputs):
         """
@@ -91,34 +100,45 @@ class MultimodalEmbeddingFunction:
             raise Exception
 
         # Preprocess inputs conditionally
-        with torch.no_grad():
-            if not texts:
-                inputs = self.processor(images=images, return_tensors="pt", padding=True).to(self.device)
-                outputs_image = self.model.visual_projection(self.model.vision_model(**inputs).pooler_output)
-            if not images:
-                inputs = self.processor(text=texts, return_tensors="pt", padding=True).to(self.device)
-                outputs_text = self.model.text_projection(self.model.text_model(**inputs).pooler_output)
-
-        # Combine embeddings
         embeddings = []
-        if texts:
-            embeddings.append(outputs_text.cpu())
-        if images:
-            embeddings.append(outputs_image.cpu())
+        if "openai/clip-vit" in self.model_name:
+            with torch.no_grad():
+                if not texts:
+                    inputs = self.processor(images=images, return_tensors="pt", padding=True).to(self.device)
+                    outputs_image = self.model.visual_projection(self.model.vision_model(**inputs).pooler_output)
+                if not images:
+                    inputs = self.processor(text=texts, return_tensors="pt", padding=True).to(self.device)
+                    outputs_text = self.model.text_projection(self.model.text_model(**inputs).pooler_output)
+
+                if texts:
+                    embeddings.append(outputs_text.cpu().numpy())
+                if images:
+                    embeddings.append(outputs_image.cpu().numpy())
+        else:
+            if not texts:
+                embeddings.append(self.model.encode_image(images))
+            if not images:
+                embeddings.append(self.model.encode_text(texts))
 
         # Concatenate embeddings into a single tensor
-        embeddings = torch.cat(embeddings, dim=0)
+        embeddings = np.concat(embeddings, axis=0)
 
         return embeddings
 
 
 class PaperProcessor:
-    def __init__(self):
+    def __init__(self, summary: bool = True):
+        self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         self.data_folder = data_folder
         self.vectorstore = None
         self.rags = {}
-        self.embedding_function = MultimodalEmbeddingFunction()
+        self.retrievers = {}
+        self.embedding_function = MultimodalEmbeddingFunction(model_name="jinaai/jina-clip-v1")
+        logger.info("Loading pretrained summarizer")
+        self.summarizer = pipeline("summarization", model="Falconsai/text_summarization", device=self.device)
         self.llm = CustomLLM()
+        self.summary = summary
+        self.data = {}
 
     def __setup_vectorstore(self, name: str):
         collection = Chroma(
@@ -127,50 +147,69 @@ class PaperProcessor:
         )
         return collection
 
-    def process(self, paper_name: str = "2307.00651v1"):
+    async def process(self, paper_name: str = "2307.00651v1"):
         if paper_name in self.rags:
             return
 
         vectorstore = self.__setup_vectorstore(paper_name)
-
-        # download
-        extracted_files_path = self.data_folder / f"{paper_name}"
-        if not os.path.exists(extracted_files_path):
-            os.makedirs(extracted_files_path)
 
         available_papers = os.listdir(self.data_folder)
         if paper_name not in available_papers:
             self.download_paper(paper_name)
 
         # extract
+        logger.info(f"PDF elements extraction {paper_name}")
+        extracted_files_path = self.data_folder / f"{paper_name}"
         raw_pdf_elements = extract_pdf_elements(str(extracted_files_path), paper_name)
+        self.data["raw_pdf_elements"] = raw_pdf_elements
+        logger.debug(f"PDF elements extracted. Raw elements: {len(raw_pdf_elements)}")
         texts, tables = categorize_elements(raw_pdf_elements)
+        logger.debug(f"PDF elements extracted. Text: {len(texts)}. Tables: {len(tables)}")
 
         # Создаем объект CharacterTextSplitter для разбиения текста на части (чанки)
         text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
-            chunk_size=3000,
-            chunk_overlap=1000
+            chunk_size=1000,
+            chunk_overlap=500
         )
         joined_texts = " ".join(texts)
         texts_token = text_splitter.split_text(joined_texts)
+        self.data["texts_token"] = texts_token
+
+        # summaries
+        texts_summaries = None
+        if self.summary:
+            texts_summaries = self.summarizer(
+                texts_token,  # List of input texts
+                max_length=500,  # Maximum length of the summary
+                min_length=25,  # Minimum length of the summary
+                do_sample=False,  # Use deterministic summarization
+                batch_size=4  # Number of texts processed in parallel
+            )
+            # summarized = self.summarizer(tt, max_length=500, min_length=30, do_sample=False)[0]["summary_text"]
+            texts_summaries = [i["summary_text"] for i in texts_summaries]
+            self.data["texts_summaries"] = texts_summaries
 
         # setup retriever
         retriever = self.create_multi_vector_retriever(
             vectorstore=vectorstore,
-            text_summaries=None,
+            text_summaries=texts_summaries,
             texts=texts_token,
             table_summaries=None,
             tables=tables,
             image_summaries=None,
             images=None,
         )
-        rag = self.create_multi_vector_retriever(retriever)
+        self.retrievers[paper_name] = retriever
+        rag = self.multi_modal_rag_chain(retriever)
         self.rags[paper_name] = rag
 
     def download_paper(self, arxiv_id: str = "2307.00651"):
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         response = requests.get(pdf_url)
         output_path = Path(self.data_folder, arxiv_id, f"{arxiv_id}.pdf")
+        extracted_files_path = self.data_folder / f"{arxiv_id}"
+        if not os.path.exists(extracted_files_path):
+            os.makedirs(extracted_files_path)
         with open(output_path, "wb") as f:
             f.write(response.content)
 
@@ -197,6 +236,7 @@ class PaperProcessor:
                 b64_images.append(doc)
             else:
                 texts.append(doc)
+        logger.debug(f"Found texts: {len(texts)}")
         return {"images": b64_images, "texts": texts}
 
     @staticmethod
@@ -247,27 +287,34 @@ class PaperProcessor:
             doc_contents: Список исходных содержимых документов.
             """
             # Генерируем уникальные идентификаторы для каждого документа
-            doc_ids = [str(uuid.uuid4()) for _ in doc_contents]
+            doc_ids = [str(uuid.uuid4()) for _ in doc_summaries]
 
             # Создаем документы для векторного хранилища из суммаризаций
-            # summary_docs = [
-            #     Document(page_content=s, metadata={id_key: doc_ids[i]})
-            #     for i, s in enumerate(doc_summaries)
-            # ]
-            docs = [
-                Document(page_content=s, metadata={id_key: doc_ids[i]})
-                for i, s in enumerate(doc_contents)
-            ]
+            if doc_summaries:
+                logger.debug(f"Adding summaries: {doc_summaries[0]}")
+                docs = [
+                    Document(page_content=s, metadata={id_key: doc_ids[i]})
+                    for i, s in enumerate(doc_summaries)
+                ]
+            else:
+                logger.debug("Adding original texts")
+                docs = [
+                    Document(page_content=s, metadata={id_key: doc_ids[i]})
+                    for i, s in enumerate(doc_contents)
+                ]
 
             # Добавляем документы в векторное хранилище
             # retriever.vectorstore.add_documents(summary_docs)
+            logger.debug(f"Docs: {len(docs)}")
             retriever.vectorstore.add_documents(docs)
 
-            # # Добавляем метаданные документов в хранилище
-            # retriever.docstore.mset(list(zip(doc_ids, doc_contents)))
+            # Добавляем метаданные документов в хранилище
+            retriever.docstore.mset(list(zip(doc_ids, doc_summaries)))
 
         # Добавляем суммаризации текстов и таблиц, если они присутствуют
         if texts:  # text_summaries:
+            logger.debug(f"Adding texts: {len(texts)}")
+            logger.debug(f"Adding text summaries: {len(text_summaries)}")
             add_documents(retriever, text_summaries, texts)
         if tables:
             add_documents(retriever, table_summaries, tables)
@@ -275,6 +322,23 @@ class PaperProcessor:
             add_documents(retriever, image_summaries, images)
 
         return retriever  # Возвращаем созданный ритривер
+
+    @staticmethod
+    def debug_context(input_data):
+        """
+        Debugging function to inspect the context passed to the model.
+        """
+        context = input_data["context"]
+        question = input_data["question"]
+        print("Question:", question)
+        print("Retrieved Context:")
+        for i, doc in enumerate(context):
+            if doc == "texts":
+                for i, d in enumerate(context["texts"]):
+                    print(f"Document {i + 1}:")
+                    print(f"Content: {d}")
+                    print("-" * 50)
+        return input_data
 
     def multi_modal_rag_chain(self, retriever):
         """
@@ -293,14 +357,15 @@ class PaperProcessor:
                     "context": retriever | RunnableLambda(self.split_image_text_types),
                     "question": RunnablePassthrough(),
                 }
-                | self.llm
+                | RunnableLambda(self.debug_context)
+                | RunnableLambda(self.llm.generate)
                 | StrOutputParser()
         )
 
         return chain
 
     def respond(self, question: str, paper_id: str):
-        chain = self.multi_modal_rag_chain(self.rags[paper_id])
+        chain = self.rags[paper_id]
         return chain.invoke(question)
 
 
@@ -324,7 +389,7 @@ def extract_pdf_elements(path, fname):
         max_characters=4000,
         new_after_n_chars=3000,
         combine_text_under_n_chars=2000,
-        image_output_dir_path=path,
+        analyzed_image_output_dir_path=Path(path),
     )
 
 
@@ -355,19 +420,6 @@ def categorize_elements(raw_pdf_elements):
 
 
 if __name__ == "__main__":
-    collection = Chroma(
-        collection_name="profession_id",
-        embedding_function=MultimodalEmbeddingFunction()
-    )
-    texts = ["I love cats.", "I love dogs."]
-    collection.add_texts(texts=texts)
-
-    # Query the vector store
-    query = "I am a dog person."
-    results = collection.similarity_search(query, k=1)
-
-    print(results)
-
     test_multimodal = False
     if test_multimodal:
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -384,3 +436,7 @@ if __name__ == "__main__":
         probs = logits_per_image.softmax(dim=1)  # we can take the softmax to get the label probabilities
 
         print(probs)
+
+    pp = PaperProcessor()
+    pp.process()
+    print(pp.respond("tell me about the abstract?", "2307.00651v1"))

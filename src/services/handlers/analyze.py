@@ -18,7 +18,7 @@ async def process_user_response(
 ):
     """React to user response."""
     username = message.from_user.username
-    logger.info(f"Responding to {username}")
 
     assistant_answer = paper_client.respond(message.text, paper_id)
+    logger.info(f"Responding to {username}: {assistant_answer}")
     await message.answer(assistant_answer)

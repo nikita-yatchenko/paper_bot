@@ -1,6 +1,10 @@
 import torch
 from transformers import AutoModelForVision2Seq, AutoProcessor
 
+from src.settings.logger import setup_logger
+
+logger = setup_logger()
+
 
 class CustomLLM:
     def __init__(self, model_path: str = "HuggingFaceTB/SmolVLM-Instruct"):
@@ -30,6 +34,7 @@ class CustomLLM:
                     Dict: Processed inputs ready for the model.
                 """
         formatted_texts = "\n".join(inputs["context"]["texts"])
+        logger.info(f"Formatted texts: {len(formatted_texts)}")
 
         messages = [
             {"role": "user", "content": [{"type": "text", "text": f"answer user question: {inputs["question"]}\n\n"
@@ -66,15 +71,18 @@ class CustomLLM:
         Returns:
             str: Generated response.
         """
-        # Replace this with your custom model's inference logic
         processed = self.preprocess_input(prompt)
+        logger.debug(f"Processed prompt: {len(processed["input_ids"])}")
+
         inputs = {k: v.to(self.device) for k, v in processed.items()}
-        generated_ids = self.model.generate(**inputs, max_new_tokens=128, )
+        generated_ids = self.model.generate(**inputs, max_new_tokens=128)
+        prompt_len = len(processed['input_ids'][0])
+        mod_gen_id = generated_ids[0][prompt_len:].reshape(1, -1)
         generated_texts = self.processor.batch_decode(
-            generated_ids,
+            mod_gen_id,
             skip_special_tokens=True,
         )
-        return generated_texts[0]
+        return generated_texts[0].strip()
 
 
 if __name__ == "__main__":
