@@ -16,7 +16,7 @@ async def start_bot():
 
     # Initialize services
     # db = Database(os.getenv("DATABASE_URL"))
-    paper_processor = PaperProcessor(False)
+    paper_processor = PaperProcessor(True)
     logger = setup_logger()
 
     # Inject dependencies
