@@ -47,6 +47,7 @@ class MultimodalEmbeddingFunction:
             self.processor = CLIPProcessor.from_pretrained(model_name, use_fast=False)
         else:
             self.model = AutoModel.from_pretrained("jinaai/jina-clip-v1",
+                                                   force_download=True,
                                                    trust_remote_code=True)
 
     def embed_documents(self, inputs: List) -> List[List[float]]:
