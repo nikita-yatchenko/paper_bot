@@ -47,7 +47,6 @@ class MultimodalEmbeddingFunction:
             self.processor = CLIPProcessor.from_pretrained(model_name, use_fast=False)
         else:
             self.model = AutoModel.from_pretrained("jinaai/jina-clip-v1",
-                                                   force_download=True,
                                                    trust_remote_code=True)
 
     def embed_documents(self, inputs: List) -> List[List[float]]:
@@ -206,6 +205,7 @@ class PaperProcessor:
         texts_summaries = None
         if self.summary:
             first_page_summary = self.create_first_page_summary(texts_token[0])
+            logger.debug(f"First page summary: {first_page_summary}")
             texts_summaries = self.summarizer(
                 texts_token,  # List of input texts
                 max_length=500,  # Maximum length of the summary
