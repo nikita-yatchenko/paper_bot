@@ -143,9 +143,9 @@ class PaperProcessor:
     def create_first_page_summary(self, text: str):
         messages = [
             {"role": "user", "content": [{"type": "text", "text": f"create a summary for RAG. if available, include"
-                                                                  f"the following: authors, name of the paper,"
-                                                                  f"key ideas\n\n"
-                                                                  f"First page: {text}"}]}
+                                                                  f": names of the authors, name of the paper (title),"
+                                                                  f" outline key ideas\n\n"
+                                                                  f"Use this page: {text}"}]}
         ]
 
         processed = self.llm.processor.apply_chat_template(
@@ -205,6 +205,7 @@ class PaperProcessor:
         texts_summaries = None
         if self.summary:
             first_page_summary = self.create_first_page_summary(texts_token[0])
+            logger.debug(f"First page: {texts_token[0]}")
             logger.debug(f"First page summary: {first_page_summary}")
             texts_summaries = self.summarizer(
                 texts_token,  # List of input texts
