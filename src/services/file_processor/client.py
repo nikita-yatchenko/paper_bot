@@ -142,9 +142,8 @@ class PaperProcessor:
 
     def create_first_page_summary(self, text: str):
         messages = [
-            {"role": "user", "content": [{"type": "text", "text": f"create a summary for RAG. if available, include"
-                                                                  f": names of the authors, name of the paper (title),"
-                                                                  f" outline key ideas\n\n"
+            {"role": "user", "content": [{"type": "text", "text": f"What are the names of the authors, name of the "
+                                                                  f"paper (title), and key ideas?\n\n"
                                                                   f"Use this page: {text}"}]}
         ]
 
