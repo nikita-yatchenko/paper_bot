@@ -142,9 +142,10 @@ class PaperProcessor:
 
     def create_first_page_summary(self, text: str):
         messages = [
-            {"role": "user", "content": [{"type": "text", "text": f"Extract: 1) the names of the authors, 2) name of "
-                                                                  f"paper (title), and 3) key ideas?\n\n"
-                                                                  f"Use this page: {text}"}]}
+            {"role": "user", "content": [{"type": "text", "text": f"Use this page: {text}\n\n"
+                                                                  f"Extract: 1) the names of the authors, 2) name of "
+                                                                  f"paper (title), and 3) key ideas"
+                                          }]}
         ]
 
         processed = self.llm.processor.apply_chat_template(
