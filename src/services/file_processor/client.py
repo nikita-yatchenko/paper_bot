@@ -140,6 +140,32 @@ class PaperProcessor:
         self.summary = summary
         self.data = {}
 
+    def create_first_page_summary(self, text: str):
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": f"create a summary for RAG. if available, include"
+                                                                  f"the following: authors, name of the paper,"
+                                                                  f"key ideas\n\n"
+                                                                  f"First page: {text}"}]}
+        ]
+
+        processed = self.llm.processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+
+        inputs = {k: v.to(self.device) for k, v in processed.items()}
+        generated_ids = self.llm.model.generate(**inputs, max_new_tokens=128)
+        prompt_len = len(processed['input_ids'][0])
+        mod_gen_id = generated_ids[0][prompt_len:].reshape(1, -1)
+        generated_texts = self.llm.processor.batch_decode(
+            mod_gen_id,
+            skip_special_tokens=True,
+        )
+        return generated_texts[0].strip()
+
     def __setup_vectorstore(self, name: str):
         collection = Chroma(
             collection_name=name,
@@ -178,15 +204,17 @@ class PaperProcessor:
         # summaries
         texts_summaries = None
         if self.summary:
+            first_page_summary = self.create_first_page_summary(texts_token[0])
             texts_summaries = self.summarizer(
                 texts_token,  # List of input texts
                 max_length=500,  # Maximum length of the summary
                 min_length=25,  # Minimum length of the summary
                 do_sample=False,  # Use deterministic summarization
-                batch_size=4  # Number of texts processed in parallel
+                batch_size=8  # Number of texts processed in parallel
             )
             # summarized = self.summarizer(tt, max_length=500, min_length=30, do_sample=False)[0]["summary_text"]
             texts_summaries = [i["summary_text"] for i in texts_summaries]
+            texts_summaries.append(first_page_summary)
             self.data["texts_summaries"] = texts_summaries
 
         # setup retriever

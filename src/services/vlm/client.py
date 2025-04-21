@@ -75,7 +75,7 @@ class CustomLLM:
         logger.debug(f"Processed prompt: {len(processed["input_ids"])}")
 
         inputs = {k: v.to(self.device) for k, v in processed.items()}
-        generated_ids = self.model.generate(**inputs, max_new_tokens=128)
+        generated_ids = self.model.generate(**inputs, max_new_tokens=256)
         prompt_len = len(processed['input_ids'][0])
         mod_gen_id = generated_ids[0][prompt_len:].reshape(1, -1)
         generated_texts = self.processor.batch_decode(
